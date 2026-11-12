@@ -45,6 +45,7 @@ let syncLocalSetupAfter: typeof import('./local-setup-sync.ts').syncLocalSetupAf
 let approveLinkedSkill: typeof import('./local-setup-snapshot.ts').approveLinkedSkill
 let listLocalSkills: typeof import('./local-skills.ts').listLocalSkills
 let setLocalSetupAutoSync: typeof import('./local-setup-watch.ts').setLocalSetupAutoSync
+let setLocalSetupFolders: typeof import('./local-setup-watch.ts').setLocalSetupFolders
 let stopLocalSetupWatcher: typeof import('./local-setup-watch.ts').stopLocalSetupWatcher
 let resetStateForTests: typeof import('./local-setup-state.ts').resetStateForTests
 
@@ -132,7 +133,8 @@ before(async () => {
   ;({ syncLocalSetup, syncLocalSetupAfter } = await import('./local-setup-sync.ts'))
   ;({ approveLinkedSkill } = await import('./local-setup-snapshot.ts'))
   ;({ listLocalSkills } = await import('./local-skills.ts'))
-  ;({ setLocalSetupAutoSync, stopLocalSetupWatcher } = await import('./local-setup-watch.ts'))
+  ;({ setLocalSetupAutoSync, setLocalSetupFolders, stopLocalSetupWatcher } =
+    await import('./local-setup-watch.ts'))
   ;({ resetStateForTests } = await import('./local-setup-state.ts'))
 })
 
@@ -149,6 +151,7 @@ beforeEach(() => {
   failures.createInstruction = []
   creates = 0
   rmSync(path.join(home, '.claude'), { recursive: true, force: true })
+  rmSync(path.join(home, '.agents'), { recursive: true, force: true })
   rmSync(path.join(userData, 'local-setup-sync.json'), { force: true })
   rmSync(path.join(userData, 'local-setup-hashes.json'), { force: true })
   resetStateForTests()
@@ -369,5 +372,41 @@ describe('syncLocalSetup state', () => {
       assert.deepEqual(Object.keys(saved[key]?.skills ?? {}).sort(), ['deploy', 'triage'])
       assert.equal(saved[key]?.instructionIds.length, 1)
     }
+  })
+})
+
+describe('syncLocalSetup with more folders', () => {
+  const claude = () => path.join(home, '.claude', 'skills')
+  const codex = () => path.join(home, '.agents', 'skills')
+
+  it('syncs an added folder, a name in two folders from the first, and drops it when removed', async () => {
+    writeFile('.agents/skills/review/SKILL.md', '---\ndescription: Review\n---\n')
+    writeFile('.agents/skills/deploy/SKILL.md', '---\ndescription: Codex copy\n---\n')
+
+    const result = await setLocalSetupFolders('t1', [codex()])
+
+    assert.equal(result.syncedSkills, 3)
+    assert.ok(team('t1').objects.has('skills/review/SKILL.md'))
+    // The first folder's copy: Codex's deploy has no run.sh.
+    assert.ok(team('t1').objects.has('skills/deploy/run.sh'))
+    assert.deepEqual(result.skipped, [
+      { name: 'deploy', reason: 'name_clash', folder: codex(), syncedFrom: claude() },
+    ])
+    assert.deepEqual(result.sources, { deploy: claude(), review: codex(), triage: claude() })
+
+    const removed = await setLocalSetupFolders('t1', [])
+
+    assert.equal(removed.removedSkills, 1)
+    assert.equal(team('t1').objects.has('skills/review/SKILL.md'), false)
+    assert.ok(team('t1').objects.has('skills/deploy/run.sh'))
+  })
+
+  it('keeps only absolute folders, once each, and never ~/.claude/skills again', async () => {
+    writeFile('.agents/skills/review/SKILL.md', '---\ndescription: Review\n---\n')
+    await setLocalSetupFolders('t1', ['relative/skills', codex(), `${codex()}/`, claude()])
+
+    assert.deepEqual((savedTeams() as Record<string, { folders?: string[] }>)['u1:t1']?.folders, [
+      codex(),
+    ])
   })
 })
