@@ -4,6 +4,7 @@
 // reviewed exactly those links (approveLinkedSkill, or the Import review).
 // Automatic sync has no confirm step of its own.
 import { createHash } from 'node:crypto'
+import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { MAX_SYNCED_FILE_BYTES } from './local-setup-plan.ts'
@@ -123,10 +124,15 @@ async function hashFile(full: string, entry: LocalSkillEntry, cache: HashCache, 
   return { sha256: hashed.sha256, bytes: hashed.bytes ?? size }
 }
 
+/**
+ * `sources` is the folder each skill synced from last time: a folder that cannot
+ * be read now (a drive not mounted) holds what it synced, like an unreadable file.
+ */
 export async function snapshotLocalSkills(
   folders: readonly string[],
   cache: HashCache,
   approved: ApprovedLinks,
+  sources: Readonly<Record<string, string>> = {},
 ): Promise<{ skills: SkillSnapshot[]; hashes: HashCache; clashes: SkippedSkill[] }> {
   const { skills, clashes } = await skillsOfFolders(folders)
   const out: SkillSnapshot[] = []
@@ -158,6 +164,15 @@ export async function snapshotLocalSkills(
       // One unreadable file skips only its own skill, which the planner holds.
       console.warn(`local-setup: could not read ${skill.name}`, e)
       out.push({ name: skill.name, folder, entries: new Map(), files: [] })
+    }
+  }
+  const missing = await Promise.all(
+    folders.map(async (folder) => !(await fs.stat(folder).catch(() => null))?.isDirectory()),
+  )
+
+  for (const [name, folder] of Object.entries(sources)) {
+    if (missing[folders.indexOf(folder)] && !out.some((skill) => skill.name === name)) {
+      out.push({ name, folder, entries: new Map(), files: [] })
     }
   }
 

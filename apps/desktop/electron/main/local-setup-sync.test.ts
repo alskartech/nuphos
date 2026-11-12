@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   unlinkSync,
@@ -152,6 +153,7 @@ beforeEach(() => {
   creates = 0
   rmSync(path.join(home, '.claude'), { recursive: true, force: true })
   rmSync(path.join(home, '.agents'), { recursive: true, force: true })
+  rmSync(path.join(home, '.agents-away'), { recursive: true, force: true })
   rmSync(path.join(userData, 'local-setup-sync.json'), { force: true })
   rmSync(path.join(userData, 'local-setup-hashes.json'), { force: true })
   resetStateForTests()
@@ -399,6 +401,21 @@ describe('syncLocalSetup with more folders', () => {
     assert.equal(removed.removedSkills, 1)
     assert.equal(team('t1').objects.has('skills/review/SKILL.md'), false)
     assert.ok(team('t1').objects.has('skills/deploy/run.sh'))
+  })
+
+  it('keeps what a folder synced while the folder cannot be read, as an unmounted drive', async () => {
+    writeFile('.agents/skills/review/SKILL.md', '---\ndescription: Review\n---\n')
+    await setLocalSetupFolders('t1', [codex()])
+    renameSync(path.join(home, '.agents'), path.join(home, '.agents-away'))
+
+    const away = await syncLocalSetup('t1')
+
+    assert.equal(away.removedSkills, 0)
+    assert.ok(team('t1').objects.has('skills/review/SKILL.md'))
+    // Two passes away still hold it: the folder is remembered with the skill.
+    assert.equal((await syncLocalSetup('t1')).removedSkills, 0)
+    renameSync(path.join(home, '.agents-away'), path.join(home, '.agents'))
+    assert.equal((await syncLocalSetup('t1')).sources?.review, codex())
   })
 
   it('keeps only absolute folders, once each, and never ~/.claude/skills again', async () => {

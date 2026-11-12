@@ -134,6 +134,7 @@ async function runSync(teamId: string): Promise<LocalSetupResult> {
     folders,
     readHashCache(),
     readTeam(key).approvedLinks ?? {},
+    readTeam(key).sources,
   )
   const local = snapshot.skills
 
@@ -206,7 +207,10 @@ async function runSync(teamId: string): Promise<LocalSetupResult> {
       )
       if (skill) sources[name] = skill.folder
     }
-    team.sources = sources
+    // A held skill (its folder not readable this pass) keeps its folder for the next.
+    const held = Object.entries(team.sources ?? {}).filter(([name]) => name in team.skills)
+
+    team.sources = { ...Object.fromEntries(held), ...sources }
   })
 
   const instruction = await syncInstruction(teamId, key)
